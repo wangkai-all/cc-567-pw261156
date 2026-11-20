@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>分段计量结算 · 居民与公共区域分开核算</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --line: #dfe3e8; --ink: #1c2430;
+    --muted: #66707d; --accent: #1f5eff; --good: #0a7d44; --bad: #b3261e;
+    --warn: #9a6700; --chip: #eef2ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--ink); }
+  header { padding: 20px 28px 12px; }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  .sub { color: var(--muted); font-size: 13px; }
+  main { padding: 8px 28px 40px; max-width: 1180px; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+  button { border: 1px solid var(--line); background: var(--card); color: var(--ink);
+    padding: 9px 16px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:hover { filter: brightness(0.97); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 18px; }
+  .card h2 { margin: 0 0 10px; font-size: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { background: var(--bg); border-radius: 8px; padding: 10px 12px; }
+  .stat .k { color: var(--muted); font-size: 12px; }
+  .stat .v { font-size: 18px; font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child, td.l { text-align: left; }
+  thead th { background: #f0f2f5; }
+  .chip { display: inline-block; background: var(--chip); color: var(--accent);
+    border-radius: 999px; padding: 1px 9px; font-size: 12px; }
+  .ok { color: var(--good); font-weight: 600; }
+  .err { color: var(--bad); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+  .note { background: #fff8e6; border: 1px solid #f0dca8; border-radius: 8px;
+    padding: 10px 12px; color: #5c4400; margin: 10px 0; }
+  .goodbox { background: #edf8f1; border: 1px solid #b5e2c8; border-radius: 8px;
+    padding: 10px 12px; color: var(--good); margin: 10px 0; }
+  .badbox { background: #fdeeee; border: 1px solid #f3c2be; border-radius: 8px;
+    padding: 10px 12px; color: var(--bad); margin: 10px 0; }
+  pre.json { background: #0f1725; color: #d7e0ee; border-radius: 8px; padding: 12px;
+    overflow: auto; max-height: 360px; font-size: 12px; }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .row2 { grid-template-columns: 1fr; } }
+  .batchlink { color: var(--accent); cursor: pointer; text-decoration: underline; }
+  .muted { color: var(--muted); }
+  .pill { font-size: 12px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>分段计量结算系统 <span class="pill">居民 / 公共区域分开核算 · 按变更时刻拆账</span></h1>
+  <div class="sub">总表换装与单位倍率变化在同一小时内发生；入仓按变更时刻拆账，结算快照冻结，查询端可看新估算或回查已结批次。</div>
+</header>
+<main>
+  <section class="card" id="meta-card">
+    <h2>数据集与账期</h2>
+    <div id="meta" class="mono muted">加载中…</div>
+  </section>
+
+  <section class="card">
+    <h2>业务操作（结果均由服务端实际处理得出）</h2>
+    <div class="toolbar">
+      <button class="primary" data-action="carry">结转样例账期</button>
+      <button class="primary" data-action="supplement">补交倍率变动</button>
+      <button class="primary" data-action="allocation">对照分摊明细</button>
+      <button data-action="estimate">查看 P1 新估算（不入仓）</button>
+      <button data-action="recompute">重算量对照（分段读数 vs 快照）</button>
+      <button data-action="batches">回查已结批次</button>
+      <button data-action="reset">重置演示数据</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>业务结果区 <span class="muted" id="result-title"></span></h2>
+    <div id="result" data-evidence-result="empty">
+      <div class="muted">点击上方按钮，结果将渲染到本区域（本节点带 data-evidence-result 属性，便于核对操作前后内容）。</div>
+    </div>
+  </section>
+</main>
+
+<script>
+const resultEl = document.getElementById('result');
+const titleEl = document.getElementById('result-title');
+
+function setResult(html, evidence) {
+  resultEl.innerHTML = html;
+  resultEl.setAttribute('data-evidence-result', evidence);
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function num(x, d = 2) { return Number(x).toFixed(d); }
+function table(headers, rows) {
+  return `<table><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>` +
+    rows.map((r) => `<tr>${r.map((c) => `<td${typeof c === 'object' && c.l ? ' class="l"' : ''}>${typeof c === 'object' && c.l ? esc(c.l) : esc(c)}</td>`).join('')}</tr>`).join('') +
+    '</tbody></table>';
+}
+async function call(method, url, body) {
+  const res = await fetch(url, {
+    method,
+    headers: body ? { 'content-type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    const err = new Error(json.message || '请求失败');
+    err.code = json.error;
+    throw err;
+  }
+  return json;
+}
+function errorHtml(err) {
+  return `<div class="badbox"><b>异常（${esc(err.code || 'ERROR')}）</b>：${esc(err.message)}</div>`;
+}
+async function run(action) {
+  titleEl.textContent = '处理中…';
+  try {
+    if (action === 'carry') return renderCarry(await call('POST', '/api/demo/carry-forward'));
+    if (action === 'supplement') return renderSupplement(await call('POST', '/api/demo/supplement'));
+    if (action === 'allocation') return renderAllocation(await call('POST', '/api/demo/allocation'));
+    if (action === 'estimate') return renderEstimate(await call('GET', '/api/estimate?periodId=P1'));
+    if (action === 'recompute') return renderRecompute(await call('GET', '/api/recompute-comparison?periodId=P1'));
+    if (action === 'batches') return renderBatches(await call('GET', '/api/batches'));
+    if (action === 'reset') { await call('POST', '/api/reset'); setResult('<div class="goodbox">已重置：全部批次清空，可重新演示。</div>', 'reset'); titleEl.textContent = ''; }
+  } catch (err) {
+    setResult(errorHtml(err), 'error:' + (err.code || 'unknown'));
+    titleEl.textContent = '';
+  }
+}
+document.querySelectorAll('button[data-action]').forEach((b) => b.addEventListener('click', () => run(b.dataset.action)));
+
+function statGrid(stats) {
+  return `<div class="grid">${stats.map(([k, v]) => `<div class="stat"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>`;
+}
+function linesTable(lines, opts = {}) {
+  const headers = opts.adjust
+    ? ['表', '类型', '修正前电量', '修正后电量', '电量差', '修正前金额', '修正后金额', '补交金额']
+    : ['表', '类型', '自用电量', '分摊线损', '合计电量', '单价', '金额(元)'];
+  const rows = lines.map((l) => opts.adjust
+    ? [{ l: l.name }, l.kind === 'resident' ? '居民' : '公共', num(l.beforeTotalKwh, 4), num(l.afterTotalKwh, 4),
+      num(l.deltaKwh, 4), num(l.beforeAmount), num(l.afterAmount), `<b class="${l.deltaAmount >= 0 ? 'warn' : 'good'}">${num(l.deltaAmount)}</b>`]
+    : [{ l: l.name }, l.kind === 'resident' ? '居民' : '公共', num(l.ownKwh, 4), num(l.lossKwh, 4),
+      num(l.totalKwh, 4), num(l.unitPrice, 3), num(l.amount)]);
+  return table(headers, rows);
+}
+function segmentTable(segs) {
+  return table(
+    ['账段起', '账段止', '表', '起度', '止度', '表盘差', '当时倍率', '电量(kWh)'],
+    segs.map((s) => [{ l: s.startIso.replace('T', ' ').replace('.000Z', 'Z') }, { l: s.endIso.replace('T', ' ').replace('.000Z', 'Z') },
+      { l: s.meterId }, num(s.startDial, 4), num(s.endDial, 4), num(s.dialDelta, 4), s.multiplier, num(s.kwh, 4)]),
+  );
+}
+
+function renderCarry(d) {
+  titleEl.textContent = '— 结转样例账期';
+  const p0 = d.p0Batch, p1 = d.p1Batch;
+  const carryRows = p1.lines.filter((l) => l.kind === 'resident').map((l) => [
+    { l: l.name }, num(l.periodAmount), num(l.carryIn), num(l.currentAmount), num(l.paidAmount),
+    `<b class="${l.carryOut > 0 ? 'warn' : 'ok'}">${num(l.carryOut)}</b>`,
+  ]);
+  setResult(`
+    <div class="note">${esc(d.explanation)}</div>
+    <h3>P0（上期）已结批次 <span class="chip">${esc(p0.batchId)}</span></h3>
+    ${linesTable(p0.lines)}
+    <h3>P1 结算前的结转余额（按表）</h3>
+    ${table(['表', '结转金额(元)'], Object.entries(d.carryInAtSettle).map(([k, v]) => [{ l: k }, num(v)]))}
+    <h3>P1（本期）已结批次 <span class="chip">${esc(p1.batchId)}</span></h3>
+    ${table(['居民表', '本期金额', '期初结转 carryIn', '本期应结', '已付', '期末结转 carryOut'], carryRows)}
+    <div class="goodbox">两期均冻结为结算快照；R1 的 P0 未付款在 P1 行内以 carryIn 体现，公共区域行不参与居民结转。</div>
+  `, 'carry-forward:' + p1.batchId);
+}
+
+function renderSupplement(d) {
+  titleEl.textContent = '— 补交倍率变动';
+  const a = d.adjustment;
+  setResult(`
+    <div class="note">${esc(d.explanation)}</div>
+    <div class="grid">
+      <div class="stat"><div class="k">原结算批次</div><div class="v mono">${esc(d.originBatchId)}</div></div>
+      <div class="stat"><div class="k">调整批次</div><div class="v mono">${esc(a.batchId)}</div></div>
+      <div class="stat"><div class="k">原快照仍冻结</div><div class="v ${d.originSnapshotFrozen ? 'ok' : 'err'}">${d.originSnapshotFrozen ? '是' : '否'}</div></div>
+      <div class="stat"><div class="k">修正内容</div><div class="v">${esc(a.correction.meterId)} 倍率 ${a.correction.from}→${a.correction.to}</div></div>
+    </div>
+    <h3>修正说明</h3><div class="muted">${esc(a.reason)}；生效时刻 ${esc(a.correction.atIso)}</div>
+    ${linesTable(a.lines, { adjust: true })}
+    <h3>合计补交</h3>
+    ${statGrid([['电量差(kWh)', num(a.totals.deltaKwh, 4)], ['补交金额(元)', num(a.totals.deltaAmount)]])}
+    <div class="goodbox">再次点击本按钮会返回 <b>ADJUSTMENT_ALREADY_EXISTS</b> 异常——同一修正不可重复补交。</div>
+  `, 'supplement:' + a.batchId);
+}
+
+function renderAllocation(d) {
+  titleEl.textContent = '— 对照分摊明细';
+  const c = d.correct, n = d.naive;
+  setResult(`
+    <div class="note">${esc(d.verdict)}</div>
+    <div class="row2">
+      <div>
+        <h3>正确：分段读数（逐段当时倍率）<span class="chip ok">${esc(c.method)}</span></h3>
+        ${statGrid([
+          ['总表电量', num(c.totals.masterKwh, 4)], ['居民电量', num(c.totals.residentKwh, 4)],
+          ['公共电量', num(c.totals.publicKwh, 4)], ['线损', num(c.totals.lossKwh, 4)],
+          ['居民金额', num(c.totals.residentAmount)], ['公共金额', num(c.totals.publicAmount)],
+        ])}
+      </div>
+      <div>
+        <h3>错误：整月表盘差 × 月底倍率 <span class="chip err">${esc(n.method)}</span></h3>
+        ${statGrid([
+          ['拼接表盘差', num(n.stitchedDialDelta, 4)], ['套用倍率', n.assumedEndMultiplier],
+          ['总表电量', num(n.totals.masterKwh, 4)], ['虚增线损', num(n.totals.lossKwh, 4)],
+          ['居民金额', num(n.totals.residentAmount)], ['公共金额', num(n.totals.publicAmount)],
+        ])}
+      </div>
+    </div>
+    <h3>总表账段（同一小时两段相接）</h3>
+    ${segmentTable(c.masterSegments)}
+    <h3>逐段误差诊断（朴素算法对每段都套月底倍率 ${n.assumedEndMultiplier}）</h3>
+    ${table(
+      ['账段起', '账段止', '表', '表盘差', '正确倍率', '正确电量', '朴素电量', '偏差'],
+      n.segmentDiagnostics.map((s) => [{ l: s.startIso.replace('T', ' ').replace('.000Z', 'Z') },
+        { l: s.endIso.replace('T', ' ').replace('.000Z', 'Z') }, { l: s.meterId }, num(s.dialDelta, 4),
+        s.correctMultiplier, num(s.correctKwh, 4), num(s.naiveKwh, 4),
+        `<span class="${Math.abs(s.deltaKwh) < 1e-9 ? 'ok' : 'err'}">${num(s.deltaKwh, 4)}</span>`]),
+    )}
+    <h3>各表分摊金额对照</h3>
+    ${table(['表', '类型', '正确电量', '朴素电量', '正确金额', '朴素金额', '金额差(正确−朴素)'],
+      d.lineDiffs.map((l) => [{ l: l.name }, l.kind === 'resident' ? '居民' : '公共',
+        num(l.correctTotalKwh, 4), num(l.naiveTotalKwh, 4), num(l.correctAmount), num(l.naiveAmount),
+        `<span class="${Math.abs(l.amountDiff) < 1e-9 ? 'ok' : 'warn'}">${num(l.amountDiff)}</span>`]))}
+    <h3>相接性与望远镜对账</h3>
+    ${d.adjacency.sameHourJoins.map((j) => `
+      <div class="${j.noDoubleCount ? 'goodbox' : 'badbox'}">
+        同一小时（${esc(j.hourStartIso)}）两段：${esc(j.fromMeter)} ${num(j.firstHalfKwh, 4)} 度 +
+        ${esc(j.toMeter)} ${num(j.secondHalfKwh, 4)} 度 = ${num(j.combinedKwh, 4)} 度；
+        独立真值 ${num(j.groundTruthHourKwh, 4)} 度，差异 ${num(j.diffKwh, 6)} 度 →
+        <b>${j.noDoubleCount ? '刚好相接、不重计' : '对账失败'}</b>
+      </div>`).join('')}
+    <div class="${d.telescoping.matched ? 'goodbox' : 'badbox'}">
+      望远镜对账（${d.telescoping.truthIntervals} 个独立真值区间）：
+      ${d.telescoping.matched ? '总表/居民/公共/线损全部一致 ✓' : '存在差异 ✗'}
+      <pre class="json">${esc(JSON.stringify({ expected: d.telescoping.expected, actual: d.telescoping.actual, diffs: d.telescoping.diffs }, null, 2))}</pre>
+    </div>
+  `, 'allocation-comparison:' + (d.telescoping.matched ? 'matched' : 'mismatch'));
+}
+
+function renderEstimate(d) {
+  titleEl.textContent = '— P1 新估算（未入仓）';
+  const l = d.ledger;
+  setResult(`
+    <div class="muted">输入指纹 <span class="mono">${esc(d.inputFingerprint)}</span>；估算不落地，不影响已结批次。</div>
+    ${statGrid([
+      ['总表电量', num(l.totals.masterKwh, 4)], ['居民电量', num(l.totals.residentKwh, 4)],
+      ['公共电量', num(l.totals.publicKwh, 4)], ['线损', num(l.totals.lossKwh, 4)],
+      ['居民金额', num(l.totals.residentAmount)], ['公共金额', num(l.totals.publicAmount)],
+    ])}
+    ${linesTable(l.lines)}
+    <h3>总表账段</h3>${segmentTable(l.masterSegments)}
+    <div class="${d.adjacency.noOverlapNoGap ? 'goodbox' : 'badbox'}">
+      账段覆盖整期且首尾相接：${d.adjacency.noOverlapNoGap ? '是 ✓' : '否 ✗'}；
+      同小时相接 ${d.adjacency.sameHourJoins.length} 处，均不重计：
+      ${d.adjacency.sameHourJoins.every((j) => j.noDoubleCount) ? '是 ✓' : '否 ✗'}
+    </div>
+  `, 'estimate:P1');
+}
+
+function renderRecompute(d) {
+  titleEl.textContent = '— 重算量对照';
+  const s = d.segmented, p = d.snapshot;
+  setResult(`
+    <div class="note">${esc(d.conclusion)}</div>
+    <div class="row2">
+      <div><h3>${esc(s.label)}</h3>${statGrid([
+        ['读数配对', s.counters.readingPairs], ['倍率查询', s.counters.multiplierResolutions],
+        ['边界校验', s.counters.boundaryChecks], ['表盘运算', s.counters.dialArithmetic],
+        ['快照行读取', s.counters.snapshotRowReads],
+      ])}</div>
+      <div><h3>${esc(p.label)} ${p.available ? `<span class="chip">${esc(p.batchId)}</span>` : '<span class="err">尚无快照</span>'}</h3>${statGrid([
+        ['读数配对', p.counters.readingPairs], ['倍率查询', p.counters.multiplierResolutions],
+        ['边界校验', p.counters.boundaryChecks], ['表盘运算', p.counters.dialArithmetic],
+        ['快照行读取', p.counters.snapshotRowReads],
+      ])}</div>
+    </div>
+    ${table(['指标', '分段重算', '快照读取', '节省'], [
+      ['读数配对', s.counters.readingPairs, p.counters.readingPairs, d.saving.readingPairsAvoided],
+      ['倍率查询', s.counters.multiplierResolutions, p.counters.multiplierResolutions, d.saving.multiplierLookupsAvoided],
+      ['边界校验', s.counters.boundaryChecks, p.counters.boundaryChecks, d.saving.boundaryChecksAvoided],
+      ['表盘运算', s.counters.dialArithmetic, p.counters.dialArithmetic, d.saving.dialArithmeticAvoided],
+    ])}
+    <div class="${d.sameResult ? 'goodbox' : 'badbox'}">同一查询结果一致：${d.sameResult ? '是 ✓' : '否 ✗'}</div>
+    ${!p.available ? '<div class="warn">提示：先执行「结转样例账期」生成快照后再对照，快照方案才可用。</div>' : ''}
+  `, 'recompute-comparison:' + (d.sameResult ? 'same' : 'different'));
+}
+
+function renderBatches(d) {
+  titleEl.textContent = '— 已结批次回查';
+  if (!d.batches.length) {
+    setResult('<div class="muted">尚无批次。先执行「结转样例账期」或「补交倍率变动」。</div>', 'batches:empty');
+    return;
+  }
+  setResult(`
+    ${table(['批次号', '类型', '账期', '创建时刻', '关联原批次', '修正/合计', '输入指纹', '操作'],
+      d.batches.map((b) => [{ l: b.batchId }, b.kind === 'settled' ? '结算快照' : '调整批次', { l: b.periodId },
+        { l: b.createdAt.replace('T', ' ').slice(0, 19) }, { l: b.originBatchId || '—' },
+        { l: b.correction ? `${b.correction.meterId} ${b.correction.from}→${b.correction.to}，补 ${num(b.totals.deltaAmount)} 元` : '—' },
+        { l: `<span class="mono">${esc(b.inputFingerprint.slice(0, 10))}</span>` },
+        { l: `<span class="batchlink" data-batch="${esc(b.batchId)}">查看快照</span>` }]))}
+    <h3>当前未结金额（按表）</h3>
+    ${table(['表', '金额(元)'], Object.entries(d.outstanding).map(([k, v]) => [{ l: k }, num(v)]))}
+  `, 'batches:' + d.batches.length);
+  resultEl.querySelectorAll('[data-batch]').forEach((el) => el.addEventListener('click', async () => {
+    try {
+      const b = await call('GET', '/api/batch?id=' + encodeURIComponent(el.dataset.batch));
+      setResult(`<h3>批次快照 <span class="chip">${esc(b.batchId)}</span>（冻结对象：${Object.isFrozen(b) ? '是' : '否'}）</h3>
+        <pre class="json">${esc(JSON.stringify(b, null, 2))}</pre>`, 'batch-snapshot:' + b.batchId);
+      titleEl.textContent = '— 批次快照';
+    } catch (err) { setResult(errorHtml(err), 'error:' + err.code); }
+  }));
+}
+
+(async function initMeta() {
+  try {
+    const m = await call('GET', '/api/meta');
+    document.getElementById('meta').innerHTML =
+      `<div>${esc(m.timelineNote)}</div>
+       <div>账期：${m.periods.map((p) => `${esc(p.id)}（${esc(p.label)}，${esc(p.startIso)} ~ ${esc(p.endIso)}）`).join('；')}</div>
+       <div>倍率变更时刻：${esc(m.multiplierChangeAt)}；换装时刻：${esc(m.splitPoint)}；单价 ${m.pricePerKwh} 元/度；真值区间 ${m.groundTruthIntervals} 个</div>
+       <div>表计：${m.meters.map((x) => `${esc(x.id)}[${esc(x.kind)},倍率${x.baseMultiplier},读数${x.readingCount}]`).join('，')}</div>`;
+  } catch (err) {
+    document.getElementById('meta').innerHTML = errorHtml(err);
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "segmented-meter-settlement",
+  "version": "1.0.0",
+  "private": true,
+  "description": "居民/公共区域分开计量、按变更时刻拆账、结算快照与分段读数重算对照的本地实现",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
